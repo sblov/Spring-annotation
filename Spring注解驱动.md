@@ -294,11 +294,505 @@ Test:
 
 ### 3、生命周期
 
+#### bean的生命周期
+
+> bean创建，初始化，销毁
+>
+> 容器管理bean的生命周期：可以自定义初始化和销毁方法，容器在bean进行到生命周期的时候调用自定义的初始化与销毁方法
+
+1、指定初始化与销毁方法
+
+```java
+MainConfigLifeCycle:
+@Configuration
+public class MainConfigLifeCycle {
+	//指定inieMethod与destroyMethod
+    //在销毁时：单例在容器关闭时被销毁；对于原型，容器不会管理该bean
+	@Bean(initMethod="init",destroyMethod="destroy")
+	public Person lov() {
+		return new Person(1,"lov",23);
+	}
+	
+}
+-----------------------------------------
+Person:
+	
+	public void init() {
+		System.out.println("init----------");
+		
+	}
+	
+	public void destroy() {
+		System.out.println("destroy--------");
+	}
+
+```
+
+2、让bean实现InitializingBean与DisposableBean
+
+```java
+Man:
+public class Man implements InitializingBean,DisposableBean{
+	@Override
+	public void destroy() throws Exception {
+		System.out.println("destroy----------------");	
+	}
+	@Override
+	public void afterPropertiesSet() throws Exception {
+	System.out.println("afterPropertiesSet----------------");	
+	}	
+}
+-------------------------------------------
+MainConfigLifeCycle:
+    @Bean
+	public Man man() {
+		return new Man();
+	}
+```
+
+3、JSR250：@PostConstruct，@PreDestroy
+
+```java
+Woman:
+public class Woman {
+	@PostConstruct //在bean创建完成并且属性赋值完成，在执行初始化方法
+	public void init() {
+		System.out.println("woman_init----------");
+	}	
+	@PreDestroy	//在容器销毁bean之前通知进行清理工作
+	public void destroy() {
+		System.out.println("woman_destroy-----------");
+	}
+}
+---------------------------------------
+ MainConfigLifeCycle:
+    @Bean
+	public Woman woman() {
+		return new Woman();
+	}
+```
+
+4、BeanPostProcessor
+
+```java
+@Component
+public class MyBeanPostProcessor implements BeanPostProcessor {
+	
+	@Override//bean的初始化调用前执行
+	public Object postProcessBeforeInitialization(Object bean, String beanName) throws BeansException {
+		System.out.println("postProcessBeforeInitialization");
+		return bean;
+	}
+
+	@Override //bean初始化调用后执行
+	public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
+		System.out.println("postProcessAfterInitialization");
+		return bean;
+	}
+}
+```
+
+#### BeanPostProcessor
+
+##### 原理
+
+> 在bean的属性赋值后，调用before，在调用bean的init，最后after
+
+**1、DefaultListableBeanFactory(AbstractAutowireCapableBeanFactory).doCreateBean(String, RootBeanDefinition, Object[])** 
+
+![](img/BeanPostProcessor.png)
+
+**2、DefaultListableBeanFactory(AbstractAutowireCapableBeanFactory).initializeBean(String, Object, RootBeanDefinition)** 
+
+![](img/BeanPostProcessor2.png)
+
+**3、DefaultListableBeanFactory(AbstractAutowireCapableBeanFactory).applyBeanPostProcessorsBeforeInitialization(Object, String)** 
+
+![](img/BeanPostProcessor1.png)
+
+##### Spring底层使用
+
+> bean赋值，注入其他组件；如：@Autowired，@Prepost......
+
+![](img/BeanPostProcessor3.png)
+
 ### 4、组件赋值
+
+#### @Value
+
+```java
+Person:
+public class Person {
+	@Value("#{T(java.lang.Math).random()*10}")
+	private Integer id;
+	@Value("lov")
+    //@Value("${lov.name}") 
+	private String name;
+   	
+	@Value("#{20+4}")
+	private Integer age;
+----------------------------------------------
+    1、基本数值
+    2、SqlEl，#{}
+    3、${}，取出配置文件中的值（在运行变量里的值）
+----------------------------------------------
+MyConfigPropertyValue:
+        //使用@PropertySource读取外部配置文件中的k/v值保存到运行的环境变量中；加载完外部的配置文件后使用${}取值
+@PropertySource(value= {"classpath:/person.properties"})
+@Configuration
+public class MyConfigPropertyValue {
+	@Bean
+	public Person person() {
+		return new Person();
+	}
+}
+```
 
 ### 5、组件注入
 
+#### @Autowired
+
+​	由**AutowiredAnnotationBeanPostProcessor**解析执行
+
+> **1**、默认优先按照类型去容器中找对应的组件
+
+> **2**、如果找到多个相同类型的组件，再将属性的名称作为组件的id去容器中查找
+
+> **3**、@Qualifier：使用该注解指定需要装配的组件的id，而不使用属性名
+
+> **4**、自动装配默认一定要将属性赋值，否则报错，required=false取消
+
+> **5**、@Primary：让Spring进行自动装配的时候、默认使用首选的bean、也可以继续使用@Qualifier指定需要装配的 bean
+
+```java
+PersonService:
+@Service
+public class PersonService {
+
+	@Autowired
+	PersonDao dao1;
+	
+	@Qualifier("dao")
+	@Autowired
+	PersonDao dao;
+	
+	@Qualifier("dao2")
+	@Autowired(required=false)
+	PersonDao dao2;
+	
+	public void test() {
+		System.out.println("@Autowired"+dao1);
+		System.out.println("@qualifier"+dao);
+		System.out.println("@Autowired(required=false)"+dao2);
+	}	
+}
+------------------------------------------
+MainConfigAutowired:
+	@Bean
+	public PersonService service() {
+		return new PersonService();
+	}	
+	@Bean
+	public PersonDao dao() {
+		return new PersonDao();
+	}
+	@Primary
+	@Bean
+	public PersonDao dao1() {
+		return new PersonDao();
+	}
+------------------------------------------
+Test:
+	@Test
+	public void test5() {	
+		AnnotationConfigApplicationContext applicationContext = new AnnotationConfigApplicationContext(MainConfigAutowired.class);
+	System.out.println("dao"+applicationContext.getBean("dao"));
+		System.out.println("dao1"+applicationContext.getBean("dao1"));
+				applicationContext.getBean(PersonService.class).test();		
+	}
+```
+
+> dao    :     com.lov.dao.PersonDao@560348e6
+> dao1  :	com.lov.dao.PersonDao@1df8b5b8
+> @Autowired	:com.lov.dao.PersonDao@1df8b5b8
+> @qualifier:	com.lov.dao.PersonDao@560348e6
+> @Autowired(required=false):	null
+
+​	**@Autowired可用在构造器，参数，方法，属性**
+
+> **构造器**：如果只有一个有参构造器，这个有参构造器的@Autowired可以省略；自动注入的是构造器的参数
+
+> **方法**：@Bean+方法参数；参数自动注入；默认可以不写@Autowired
+
+#### @Resource、@Inject
+
+> **@Resource（JSR250）**：和@Autowired一样实现自动装配功能，默认时按照组件名称进行装配；不能支持@Primary和required
+
+> **@Inject（JSR330）**：需要导入javax.inject包，和@Autowired功能一样，没有required
+>
+> ```java
+> <!-- https://mvnrepository.com/artifact/javax.inject/javax.inject -->
+> <dependency>
+>     <groupId>javax.inject</groupId>
+>     <artifactId>javax.inject</artifactId>
+>     <version>1</version>
+> </dependency>
+> ```
+
+#### Spring底层组件
+
+> 自定义组件要使用Spring容器底层的一些组件，
+>
+> 自定义组件需**实现xxxAware**：在创建对象是，会调用接口规定的方法注入相关组件；
+>
+> **Aware**：把Spring底层一些组件注入到自定义的Bean中
+>
+> 对于**xxxAware**，都有对应的**xxxProcessor**处理
+
+```java
+public class Person implements ApplicationContextAware,EnvironmentAware,EmbeddedValueResolverAware{
+    .............
+    @Override
+	public void setEmbeddedValueResolver(StringValueResolver resolver) {
+		System.out.println(resolver.resolveStringValue("os_name:${os.name},num:#{1+23}"));
+	}
+
+	@Override
+	public void setEnvironment(Environment environment) {
+		System.out.println(environment.getClass());
+	}
+
+	@Override
+	public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
+		System.out.println(applicationContext.getBean("person"));
+	}
+```
+
+![](img/aware.png)
+
+#### @Profile
+
+> 指定组件在哪个环境下被注入到容器，不指定的默认都注入
+>
+> 1、加了环境标识的bean，只有在该环境下才被注入。默认是default环境
+>
+> 2、写在配置类上，影响整个配置
+
+```java
+MainConfigProfile:
+//@Profile("test")
+@PropertySource(value= {"classpath:/db.properties"})
+@Configuration
+public class MainConfigProfile {
+
+	@Value("${name}")
+	String Name;
+	@Value("${password}")
+	String password;
+	@Value("${driver}")
+	String driver;
+	@Value("${url}")
+	String dburl;
+	
+	
+	@Bean
+	public DruidDataSource dataSourceTEST() {
+		DruidDataSource druidDataSource = new DruidDataSource();
+		
+		druidDataSource.setName(Name);
+		druidDataSource.setPassword(password);
+		druidDataSource.setDriverClassName(driver);
+		druidDataSource.setUrl(dburl);
+		
+		return druidDataSource;
+	}
+	@Profile("dev")
+	@Bean
+	public DruidDataSource dataSourceDEV() {
+		DruidDataSource druidDataSource = new DruidDataSource();
+		
+		druidDataSource.setName(Name);
+		druidDataSource.setPassword(password);
+		druidDataSource.setDriverClassName(driver);
+		druidDataSource.setUrl(dburl);
+		
+		return druidDataSource;
+	}
+	@Profile("prd")
+	@Bean
+	public DruidDataSource dataSourcePRD() {
+		DruidDataSource druidDataSource = new DruidDataSource();
+		
+		druidDataSource.setName(Name);
+		druidDataSource.setPassword(password);
+		druidDataSource.setDriverClassName(driver);
+		druidDataSource.setUrl(dburl);
+		
+		return druidDataSource;
+	}	
+}
+--------------------------------------------
+测试：
+1、命令行动态参数：虚拟机参数-Dspring.profiles.active=test
+2、代码：通过无参构造器，及手动实现有参构造器中方法
+@Test
+	public void test6() {
+		//使用无参构造器
+		AnnotationConfigApplicationContext applicationContext = new AnnotationConfigApplicationContext();
+		//设置profile
+		applicationContext.getEnvironment().setActiveProfiles("test","dev");
+		//注册配置类
+		applicationContext.register(MainConfigProfile.class);
+		//刷新
+		applicationContext.refresh();
+		
+		String[] beanDefinitionNames = applicationContext.getBeanDefinitionNames();
+		for (String string : beanDefinitionNames) {
+			if (string.contains("dataSource")) {
+				System.out.println(((DruidDataSource)applicationContext.getBean(string)).getName());;
+				System.out.println(string);
+			}
+		}
+	}
+```
+
 ### 6、AOP
+
+#### 步骤
+
+> 1、导入aop模块
+>
+> 2、定义业务逻辑类
+>
+> 3、定义日志切面类
+>
+> ​	通知方法：
+>
+> ​	前置通知：（@Before）
+>
+> ​	后置通知：（@After）
+>
+> ​	返回通知：（@AfterReturning）
+>
+> ​	异常通知：（@AfterThrowing）
+>
+> ​	环绕通知：（@Around）
+>
+> 4、给切面类的目标方法标注通知注解
+>
+> 5、将切面类与业务逻辑类都加入容器
+>
+> 6、切面类添加@Aspect
+>
+> 7、配置类添加@EnableAspectJAutoProxy
+
+**总结：**
+
+> 1、将业务逻辑组件与切面类都加到容器中；告诉Spring哪个是切面类（@Aspect）
+>
+> 2、在切面类上的每一个通知方法上标注通知注解；告诉Spring何时运行（切入点表达式）
+>
+> 3、开启基于注解的aop模式：@EnableAspectJAutoProxy
+
+**Calculator**:
+
+```java
+public class Calculator {
+
+	public int div(int i,int j) {
+		System.out.println("div执行");
+		return i/j;
+	}
+	
+}
+```
+
+**LogAspects**:
+
+```java
+@Aspect
+public class LogAspects {
+
+	//抽取公共的切入点表达式
+	//1、本类引用 :pointCut()
+	//2、其他切面引用:com.lov.aop.LogAspects.poincut()
+	@Pointcut("execution(public int com.lov.aop.Calculator.*(..))")
+	public void pointcut() {};
+	
+	@Before("pointcut()")
+	//JoinPoint参数必须是第一个参数
+	public void logStart(JoinPoint joinPoint) {
+		
+		System.out.println("logStart-------->"+Arrays.asList(joinPoint.getArgs()).toString());
+	}
+	@After("pointcut()")
+	public void logEnd(JoinPoint joinPoint) {
+		System.out.println("logEnd-------->"+joinPoint.getSignature().getName());
+	}
+	@AfterReturning(value="pointcut()",returning="result")
+	public void logReturn(Object result) {
+		System.out.println("logReturn-------->"+result);
+	}
+	@AfterThrowing(value="pointcut()",throwing="exception")
+	public void logException(Exception exception) {
+		
+		System.out.println("logException-------->"+exception);
+	}
+//	@Around("pointcut()")
+	public void logAround() {
+		System.out.println("logAround-------->");
+	}
+	
+}
+```
+
+**MainConfigAop**:
+
+```java
+@EnableAspectJAutoProxy
+@Configuration
+public class MainConfigAop {
+
+	//业务逻辑类加入到容器中
+	@Bean
+	public Calculator calculator() {
+		return new Calculator();
+	}
+	
+	//切面类加入到容器中
+	@Bean
+	public LogAspects logAspects() {
+		return new LogAspects();
+	}
+	
+}
+```
+
+**Test**:
+
+```java
+@Test
+	public void test7() {
+		
+		
+		AnnotationConfigApplicationContext applicationContext = new AnnotationConfigApplicationContext(MainConfigAop.class);
+		Calculator bean = applicationContext.getBean(Calculator.class);
+		
+		System.out.println(bean.div(3,3));
+	}
+```
+
+**result**:
+
+```java
+logStart-------->[3, 3]
+div执行
+logEnd-------->div
+logReturn-------->1
+1
+```
+
+
 
 ### 7、声明式事物	
 
