@@ -792,9 +792,342 @@ logReturn-------->1
 1
 ```
 
+#### 原理
 
+##### @EnableAspectJAutoProxy
+
+> 在AspectJAutoProxyRegistrar中为容器注入AnnotationAwareAspectJAutoProxyCreator
+
+```java
+EnableAspectJAutoProxy:
+//为容器中导入了AspectJAutoProxyRegistrar
+@Import(AspectJAutoProxyRegistrar.class)
+public @interface EnableAspectJAutoProxy {
+------------------------------------------------
+AspectJAutoProxyRegistrar：
+//实现ImportBeanDefinitionRegistrar，则在该组件会为容器导入自定义的bean
+    class AspectJAutoProxyRegistrar implements ImportBeanDefinitionRegistrar {
+        //该方法注入AnnotationAwareAspectJAutoProxyCreator类
+         AopConfigUtils.registerAspectJAnnotationAutoProxyCreatorIfNecessary(registry);
+-------------------------------------------------
+AopConfigUtils.registerAspectJAnnotationAutoProxyCreatorIfNecessary：  
+    //public static final String AUTO_PROXY_CREATOR_BEAN_NAME =
+			"org.springframework.aop.config.internalAutoProxyCreator";
+    //判断是否包含该name的bean
+    if (registry.containsBeanDefinition(AUTO_PROXY_CREATOR_BEAN_NAME)){.........}
+     //否则注册该bean
+registry.registerBeanDefinition(AUTO_PROXY_CREATOR_BEAN_NAME, beanDefinition);
+```
+
+**AopConfigUtils.registerAspectJAnnotationAutoProxyCreatorIfNecessary**
+
+![](img/internalAutoProxyCreator.png)
+
+![](img/AnnotationAwareAspectJAutoProxyCreator.png)
+
+##### AnnotationAwareAspectJAutoProxyCreator
+
+> 该类最终实现
+>
+> SmartInstantiationAwareBeanPostProcessor（后置处理器）, BeanFactoryAware（自动装配BeanFactory）
+
+```java
+AbstractAutoProxyCreator：
+public abstract class AbstractAutoProxyCreator extends ProxyProcessorSupport
+		implements SmartInstantiationAwareBeanPostProcessor, BeanFactoryAware {
+```
+
+**执行流程**
+
+![继承类](img/ext.png)
+
+![实现类](img/imp.png)
+
+> 通过上面的分析，断点测试	
+
+> 流程：
+>
+> 1、传入配置类，创建ioc容器
+>
+> 2、注册配置类，调用refresh()刷新容器
+>
+> 3、注册bean的后置处理器来拦截bean的创建
+>
+> ​	1）先获取ioc容器已经定义了需要创建的对象的所有BeanPostProcessor
+>
+> ​	2）给容器中加入别的BeanPostProcessor
+>
+> ​	3）优先注册实现了PriorityOrdered接口的BeanPostProcessor
+>
+> ​	4）再注册实现Ordered接口的BeanPostProcessor
+>
+> ​	5）最后注册没有实现优先级接口的BeanPostProcessor
+>
+> ​	6）注册BeanPostProcessor，实际是创建BeanPostProcessor对象，保存在容器中
+>
+> ​	==创建AnnotationAwareAspectJAutoProxyCreator==
+>
+> ​		（1）创建bean实例
+>
+> ​		（2）populatebean()给bean的各种属性赋值
+>
+> ​		（3）initializeBean()初始化bean
+>
+> ​				-1、invokeAwareMethods()处理Aware接口的方法会调用
+>
+> ​				-2、applyBeanPostProcessorBeforeInitialization()应用后置处理器
+>
+> ​				-3、invokeInitMethods()执行自定义的初始化方法
+>
+> ​				-4、applyBeanPostProcessorAfterInitialization()执行后置处理器
+>
+> ​		（4）**BeanPostProcessor创建成功**
+>
+> 4、finishBeanFactoryInitialization()完成BeanFactory的初始化工作，创建剩下的单实例bean
+>
+> ​	1）遍历获取容器中所有的Bean，依次创建对象
+>
+> ​	`	getBean()-->doGetBean()-->getSingleton()`
+>
+> ​	2）创建bean
+>
+> ​		（1）先从缓存中获取当前bean，如果能获取到，说明bean是之前被创建过的，直接使用，否则再创建；只有创建好的Bean都会被缓存起来
+>
+> ​		（2）createBean()创建bean
+>
+> ​		BeanPostProcessor是在Bean对象创建完成初始化前后调用
+>
+> ​		InstantiationAwareBeanPostProcessor是在创建bean实例前先尝试使用后置处理器返回对象
+>
+> ​			-1、resolveBeforeInstantiation：解析BeforeInstantiation；希望后置处理器在此能返回一个代理对象，如果能返回代理对象就使用，否则继续
+>
+> ​			-2、doCreateBean：正在的去创建一个bean实例，与3-6)-(3)的流程相同	
+
+**AnnotationAwareAspectJAutoProxyCreator(BeanPostProcessor)作用**
+
+> 1、每一个bean创建前都会调用postProcessBeforeInstantiation()
+>
+> ​	针对Calculator与LogAspects的创建（断点）
+>
+> ​	1）判断当前bean是否在advisedBeans中（保存所有需要增强的bean）
+>
+> ​	2）判断当前bean是否是基础类型（advice，Pointcut，Advisor，AopInfrastructureBean或者切面（@Aspect））
+>
+> ​	3）是否需要跳过
+>
+> ​		（1）获取候选的增强器（切面里的通知方法）（List\<Advisor> candidateAdvisors ）；每一个封装的通知方法的增强器是InstantiationModelAwarePointcutAdvisor，判断每一个增强器是否是AspectJPointcutAdvisor类型的，返回true
+>
+> ​		（2）永远返回false
+>
+> 2、创建对象
+>
+> postProcessAfterInitialization：
+>
+> ​	return wrapIfNecessary
+>
+> ​	1）获取当前bean的所有增强器（通知方法)(Object[] specificInterceptors)
+>
+> ​		（1）找到候选的所有的增强器
+>
+> ​		（2）获取到能在bean使用的增强器
+>
+> ​		（3）给增强器排序
+>
+> ​	2）保存当前bean在advisedBeans中
+>
+> ​	3）如果当前bean需要增强，创建当前bean的代理对象
+>
+> ​		（1）获取当前所有增强器
+>
+> ​		（2）保存到proxyFactory
+>
+> ​		（3）创建代理对象：Spring自动决定
+>
+> ​				JDK，CGLIB
+>
+> ​	4）给容器中返回当前组件使用增强的代理对象
+>
+> ​	5）之后容器中获取到的就是这个组件的代理对象，执行目标方法的时候，代理对象就会执行通知方法的流程
+>
+> 3、目标方法执行
+>
+> ​	容器中保存了组件的代理对象（cglib增强后的对象），这个对象里面保存了详细信息（增强器，目标对象.....）
+>
+> ​	1）cglibAopProxy.intercept()，拦截目标方法的执行
+>
+> ​	2）根据ProxyFactory对象获取将要执行的目标方法拦截器链
+>
+> ​		List\<Object>  chain = this.advised.getInterceptorsAndDynamicInterceptionAdvice
+>
+> ​		（1）List\<Object> interceptorList保存所有拦截器
+>
+> ​		（2）遍历所有增强器，将其转为Interceptor
+>
+> ​			registry.getInterceptors(advisor)
+>
+> ​		（3）将增强器转为List\<MethodInterceptor>
+>
+> ​			如果是，直接加入集合，否则转换
+>
+> ​		拦截器链（每一个通知方法又被包装为方法拦截器）
+>
+> ​	3）如果没有拦截器链，直接执行目标方法
+>
+> ​	4）如果有拦截器链，把需要执行的目标对象，目标方法，拦截器链等信息传入创建一个CglibMethodInvocation对象，并调用proceed()
+>
+> ​	5）拦截器链的触发过程
+>
+> ​		（1）如果没有拦截器执行目标方法，或者拦截器的索引和（拦截器数组-1）大小一样（执行到最后一个拦截器）执行目标方法
+>
+> ​		（2）链式获取每一个拦截器，拦截器执行invoke方法，每一个拦截器等待下一个拦截器执行完成返回之后再执行
+>
+> ​			拦截器机制：保证通知方法与目标方法的执行顺序
+>
+> ![](img/aop.png)
+
+#### AOP总结
+
+> 1、@EnableAspectJAutoProxy 开启AOP功能
+>
+> 2、@EnableAspectJAutoProxy 会给容器中注册个组件AnnotationAwareAspectJAutoProxyCreator
+>
+> 3、AnnotationAwareAspectJAutoProxyCreator是一个后置处理器
+>
+> 4、容器创建流程
+>
+> ​	1）registerBeanPostProcessor()注册后置处理器，创建AnnotationAwareAspectJAutoProxyCreator
+>
+> ​	2）finishBeanFactoryInitialization()初始化剩下的单实例bean
+>
+> ​		（1）创建业务逻辑组件和切面组件
+>
+> ​		（2）AnnotationAwareAspectJAutoProxyCreator拦截组件的创建过程
+>
+> ​		（3）组件创建后，判断组件是否需要增强
+>
+> 5、执行目标方法：
+>
+> ​	1）代理对象执行目标方法
+>
+> ​	2）CglibAopProxy.intercept()
+>
+> ​		（1）得到目标方法的拦截器链
+>
+> ​		（2）利用拦截器的链式机制，依次进入每一个拦截器进行执行
+>
+> ​		（3）效果：
+>
+> ​			正常：前置-》目标方法-》后置-》返回
+>
+> ​			异常：前置-》目标方法-》后置-》异常
 
 ### 7、声明式事物	
+
+#### 环境
+
+> 1、导入相关依赖
+>
+> ​	数据源、数据库驱动、、、
+>
+> 2、配置数据源、JdbcTemplate操作数据库
+>
+> 3、给方法上标注@Translational表示当前方法是一个事务方法
+>
+> 4、@EnableTranslationManagement开启基于注解的事务管理功能
+>
+> 5、配置事务管理器来控制事务
+
+Service：
+
+```java
+@Service
+public class UserService {
+
+	@Autowired
+	private UserDao dao;
+	
+	@Transactional
+	public void insertUser() {
+		dao.insert();
+		System.out.println("insert finished");
+	}
+}
+```
+
+Config:
+
+```java
+@EnableTransactionManagement
+@ComponentScan("com.lov.tx")
+@Configuration
+public class TxConfig {
+
+	
+	@Bean
+	public DruidDataSource dataSource() {
+		
+		DruidDataSource dataSource = new DruidDataSource();
+		dataSource.setUsername("root");
+		dataSource.setPassword("997103");
+		dataSource.setDriverClassName("com.mysql.jdbc.Driver");
+		dataSource.setUrl("jdbc:mysql:///lov");
+		
+		return dataSource;
+	}
+	
+	@Bean
+	public JdbcTemplate jdbcTemplate() {
+		//spring对配置类特殊处理，给容器中加组件，调用方法，只会去容器中获取a
+		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
+		return jdbcTemplate;
+	}
+	//事务管理器
+	@Bean
+	public PlatformTransactionManager dataSourceTransactionManager() {
+		return new DataSourceTransactionManager(dataSource());
+	}
+}
+
+```
+
+#### 原理
+
+> 1、@EnableTranslationManagement
+>
+> ​	利用TransactionManagementConfigurationSelector导入两个组件：
+>
+> ​	AutoProxyRegistrar
+> 	ProxyTransactionManagementConfiguration
+>
+> 2、AutoProxyRegistrar
+>
+> ​	给容器中注册一个InfrastructureAdvisorAutoProxyCreator组件
+>
+> ​	该组件利用后置处理器机制在对象创建后，包装对象，返回一个代理对象，代理对象执行方法利用拦截器链执行	
+>
+> 3、ProxyTransactionManagementConfiguration
+>
+> ​	1）给容器中注册事务增强器
+>
+> ​		（1）事务增强器要用事务注解的信息，AnnotationTransactionAttributeSource解析事务信息
+>
+> ​		（2）事务拦截器
+>
+> ​			transactionInterceptor：保存事务属性信息，事务管理器
+>
+> ​			实现MethodInterceptor
+>
+> ​			在目标方法执行时：
+>
+> ​				执行拦截器链
+>
+> ​				事务拦截器：
+>
+> ​					-1、先获取事务相关属性
+>
+> ​					-2、再获取PlatformTransactionManager
+>
+> ​					-3、执行目标方法；异常则回滚
 
 ## 二、扩展原理
 
